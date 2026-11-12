@@ -24,13 +24,19 @@
 7. 실전 검증: 30장 이상 배치로 속도·실패율·일관성 측정, 기본값 조정
 
 ## 현재 상태
-- 1~4단계 완료(조사·스파이크·`docs/PRD.md`). 5단계: 사용자 확인 대기.
-- 결정: GUI 앱 없이 스킬 문서 + 보조 스크립트(compose·flow_run·check·montage). 브라우저 실행기는 `aside repl` 1차, Playwright CDP 대체안.
+- 1~4단계 완료. 6단계(본 제작) 1차 완료: 스크립트 2개 + 절차 문서. 인계는 `HANDOFF.md`.
+- 결정: GUI 앱 없이 절차 문서 + 보조 스크립트 2개로 축소(compose는 Claude가 jsonl 직접 작성, check·montage·fit은 review.py 하나). 브라우저 실행기는 `aside repl` 1차, Playwright CDP 대체안.
+- 도구:
+  - `tools/flow_run.py` — 프롬프트 jsonl → Flow 생성·다운로드·manifest, 재실행 시 done skip — `python tools/flow_run.py p.jsonl --project-url <URL> --count 2 --quality 1k`
+  - `tools/review.py` — check(손상·크기·빈 이미지·중복)·montage·fit(1080 맞춤) — `python tools/review.py check|montage|fit <run>`
+  - 절차: `docs/WORKFLOW.md`
+- 실전 시험(2026-11-12, `artifacts/runs/20261112-flowrun-test2`): t01 x2 생성 29초·다운로드 2장, t02 `ref_title` 참조 수정 35초(원본 화풍 유지), check PASS, 몽타주 육안 일치.
+- 고친 결함: 새 타일을 DOM 순서로 찾으면 옛 이미지를 받음 → 생성 전후 img src 차이로 식별 / 타일 표시(data-fr)가 hover 재렌더로 사라짐 → 사용 직전 재표시 / 메뉴는 그룹 안 `button[aria-label="옵션 더보기"]` 직접 클릭 / PowerShell BOM jsonl → utf-8-sig.
 - 측정: x1 3건 연속 제출 26~36초 완료, x2 26초, 참조 수정 32초, 1K 다운로드 1024² JPEG.
 - 해상도: 1K 1:1 1024², 16:9 1376×768 / 2K 1:1 2048², 16:9 2752×1536(약 16초) → 1080은 2K 받아 축소.
 - 조사 산출물: `artifacts/runs/20261112-flow-ui-probe/`(probe*.txt, 샘플 이미지).
 - 미해결: 한도·오류·캡차 문구, 무료 한도 공식 수치.
-- 다음 행동: 사용자 승인 후 6단계(본 제작)부터.
+- 다음 행동: (1) 30개 이상 실전 배치로 속도·실패율 측정, 한도·오류 문구 수집해 `problemLines` 정규식 보강 (2) 9:16·2K 다운로드 실측과 `fit` 확인 (3) 캐릭터 일관성 배치(같은 ref_title 반복) 합격률 측정 (4) review.py 기준값(blank 8.0, dup 5)을 실제 이미지로 조정 (5) review.py 독립 리뷰 미실시.
 
 ## 이력
 - 2026-11-12: 라핀 v1.2 분석(DOM 매크로: textbox insertText → 생성 버튼 클릭 → 이미지 감지 → 다운로드, 5~10초 무작위 대기, 애셋 검색으로 캐릭터 참조). 작업 순서 확정.
