@@ -4,8 +4,10 @@
 Input  : prompts.jsonl, one object per line: {"id", "prompt", "ratio"?, "count"?, "ref_title"?}
 Output : <run>/images/<id>_<n>.jpg, <run>/manifest.json, <run>/logs/chunk_XX.txt
 
-Each chunk is one `aside repl` call (the REPL opens a fresh tab per call and its session
-folder is discarded afterwards), so downloaded bytes travel back over stdout as base64.
+Each chunk is one `aside repl` call (the REPL opens a fresh background tab per call, closes it
+and discards its session folder afterwards), so downloaded bytes travel back over stdout as base64.
+Clicks and typing go through the browser's DevTools protocol, not the OS mouse/keyboard, and the
+tab is never made the window's active tab, so the user's screen and input are left alone.
 Selectors and Flow UI labels live only in JS_TEMPLATE.
 """
 import argparse, base64, datetime, json, os, random, re, shutil, subprocess, sys, tempfile, time
@@ -15,11 +17,16 @@ JS_TEMPLATE = r"""
 const CFG = __CFG__;
 const TILE = 'img[alt="사용자 이미지를 표시하는 타일"]';
 const emit = (o) => console.log('RES|' + JSON.stringify(o));
+// aside repl kills a call at 120 s, so every wait is bounded by the remaining call budget
+const T0 = Date.now(); const left = () => CFG.budget_s * 1000 - (Date.now() - T0);
 const pg = await openTab(CFG.project_url);
 let ready = false;
 for (let i = 0; i < 40 && !ready; i++) { await sleep(1000); ready = await pg.evaluate(() => !!document.querySelector('[role=textbox],textarea,[contenteditable=true]')); }
 if (!ready || !pg.url().includes('flow.google.com')) { emit({fatal: 'flow_not_ready', url: pg.url()}); }
 else {
+// REPL sessions start without stored consent, and the cookie banner covers the submit button
+const later = pg.getByRole('button', {name: '나중에', exact: true});
+try { if (await later.first().isVisible()) { await later.first().click({timeout: 5000}); await sleep(800); } } catch (e) {}
 const tileSrcs = async () => await pg.evaluate((s) => [...document.querySelectorAll(s)].map((i) => i.src), TILE);
 const tree = async () => (await snapshot(pg)).tree;
 // New tiles are identified by image src (titles arrive late and DOM order is not reliable);
@@ -28,7 +35,8 @@ const markBy = async (key, val, mark) => await pg.evaluate(([key, val, mark, s])
   for (const i of document.querySelectorAll(s)) { const g = i.closest('[role=group]'); if (!g) continue;
     if ((key === 'src' && i.src === val) || (key === 'title' && g.getAttribute('aria-label') === val)) { g.setAttribute('data-fr', mark); return g.getAttribute('aria-label') || ''; } }
   return null; }, [key, val, mark, TILE]);
-const problemLines = (t) => t.split('\n').filter((l) => /오류|실패|한도|제한|정책|위반|다시 시도|로그인|captcha|reCAPTCHA|error|limit/i.test(l)).slice(0, 12);
+// "reCAPTCHA 로 보호됨" is a permanent footer badge, not a challenge
+const problemLines = (t) => t.split('\n').filter((l) => !/reCAPTCHA 로 보호됨/.test(l) && /오류|실패|한도|제한|정책|위반|다시 시도|로그인|captcha|error|limit/i.test(l)).slice(0, 12);
 let dl = null; pg.on('download', (d) => { dl = d; });
 
 async function applySettings(ratio, count) {
@@ -74,7 +82,7 @@ for (const it of CFG.items) {
   if (await btn.isDisabled()) { emit({id: it.id, status: 'failed', reason: 'submit_disabled'}); continue; }
   await btn.click();
   let fresh = [];
-  while (Date.now() - t0 < CFG.gen_timeout_s * 1000) { await sleep(2500); fresh = (await tileSrcs()).filter((s) => !before.has(s)); if (fresh.length >= it.count) break; }
+  while (Date.now() - t0 < CFG.gen_timeout_s * 1000 && left() > 20000) { await sleep(2500); fresh = (await tileSrcs()).filter((s) => !before.has(s)); if (fresh.length >= it.count) break; }
   fresh = fresh.slice(0, it.count);
   const got = fresh.length;
   const genS = (Date.now() - t0) / 1000;
@@ -93,6 +101,7 @@ for (const it of CFG.items) {
   const verified = norm(await tree()).includes(norm(it.prompt).slice(0, 40));
   let saved = 0;
   for (let k = 0; k < got; k++) {
+    if (left() < 12000) break;
     dl = null;
     // re-mark right before use: Flow re-renders tiles on hover and drops the marker
     const mk = it.id + '-' + (k + 1);
@@ -107,14 +116,14 @@ for (const it of CFG.items) {
   }
   emit({id: it.id, status: saved === it.count ? 'done' : (saved ? 'partial' : 'failed'), reason: saved ? '' : 'download_failed', got, saved, gen_s: genS, verified, titles});
   } catch (e) { emit({id: it.id, status: 'failed', reason: 'error: ' + String(e && e.message || e).slice(0, 200)}); await closeMenus(); }
-  const gap = CFG.gap_s[0] + Math.random() * (CFG.gap_s[1] - CFG.gap_s[0]);
-  await sleep(gap * 1000);
+  if (it !== CFG.items[CFG.items.length - 1]) await sleep((CFG.gap_s[0] + Math.random() * (CFG.gap_s[1] - CFG.gap_s[0])) * 1000);
 }
 }
 """
 
 QUALITY = {"1k": "1K 원본 크기", "2k": "2K 업스케일링됨"}
 RATIOS = ("16:9", "4:3", "1:1", "3:4", "9:16")
+CALL_BUDGET_S = 105  # aside repl hard-kills a call at 120 s (measured 2026-11-13)
 
 
 def build_js(cfg):
@@ -171,7 +180,7 @@ def run(args):
     todo = [o for o in items if args.force or by_id.get(o["id"], {}).get("status") != "done"][: args.max_items]
     print(json.dumps({"run": str(run_dir), "total": len(items), "todo": len(todo)}, ensure_ascii=False))
     base_cfg = {"project_url": args.project_url, "model_label": "Nano Banana 2.1", "quality_label": QUALITY[args.quality],
-                "gen_timeout_s": args.gen_timeout, "dl_timeout_s": 60, "gap_s": args.gap}
+                "gen_timeout_s": args.gen_timeout, "dl_timeout_s": 30, "gap_s": args.gap, "budget_s": CALL_BUDGET_S}
     if args.dry_run:
         print(build_js(dict(base_cfg, items=todo[: args.chunk])))
         return 0
@@ -180,7 +189,9 @@ def run(args):
     for c in range(0, len(todo), args.chunk):
         chunk = todo[c: c + args.chunk]
         js = build_js(dict(base_cfg, items=chunk))
-        limit = 120 + len(chunk) * (args.gen_timeout + args.gap[1] + 4 * 75)
+        if c:
+            time.sleep(random.uniform(*args.gap))
+        limit = 150
         try:
             p = subprocess.run([aside, "repl", "--file", "-"], input=js, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=limit)
             out = p.stdout + "\n" + p.stderr
@@ -248,11 +259,11 @@ def main():
     ap.add_argument("--ratio", default="1:1", choices=RATIOS)
     ap.add_argument("--count", type=int, default=1, choices=[1, 2, 3, 4], help="images per prompt (x1-x4)")
     ap.add_argument("--quality", default="1k", choices=list(QUALITY))
-    ap.add_argument("--chunk", type=int, default=8, help="prompts per aside call")
+    ap.add_argument("--chunk", type=int, default=1, help="prompts per aside call (a call must finish within 120 s)")
     ap.add_argument("--gap", type=float, nargs=2, default=[5, 12], metavar=("MIN", "MAX"), help="random seconds between prompts")
     ap.add_argument("--rest-every", type=int, default=30, help="rest after this many prompts")
     ap.add_argument("--rest", type=float, nargs=2, default=[60, 180], metavar=("MIN", "MAX"))
-    ap.add_argument("--gen-timeout", type=int, default=120)
+    ap.add_argument("--gen-timeout", type=int, default=80)
     ap.add_argument("--max-items", type=int, default=280, help="cap per invocation (daily budget)")
     ap.add_argument("--force", action="store_true", help="regenerate ids already done")
     ap.add_argument("--dry-run", action="store_true", help="print the first chunk's JS and exit")

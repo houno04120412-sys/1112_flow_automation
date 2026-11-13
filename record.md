@@ -30,13 +30,17 @@
   - `tools/flow_run.py` — 프롬프트 jsonl → Flow 생성·다운로드·manifest, 재실행 시 done skip — `python tools/flow_run.py p.jsonl --project-url <URL> --count 2 --quality 1k`
   - `tools/review.py` — check(손상·크기·빈 이미지·중복)·montage·fit(1080 맞춤) — `python tools/review.py check|montage|fit <run>`
   - 절차: `docs/WORKFLOW.md`
+  - 전역 스킬 `flow-image` — "플로우로 제작" 등에 자동 적용 — 원본 `skills/flow-image/SKILL.md`, 설치·갱신 `python3 install.py`(스킬을 ~/.agents·~/.claude·~/.mixdog/data/skills에 복사, 런처 `~/.agents/bin/flow-run`·`flow-review` 설치)
 - 실전 시험(2026-11-12, `artifacts/runs/20261112-flowrun-test2`): t01 x2 생성 29초·다운로드 2장, t02 `ref_title` 참조 수정 35초(원본 화풍 유지), check PASS, 몽타주 육안 일치.
 - 고친 결함: 새 타일을 DOM 순서로 찾으면 옛 이미지를 받음 → 생성 전후 img src 차이로 식별 / 타일 표시(data-fr)가 hover 재렌더로 사라짐 → 사용 직전 재표시 / 메뉴는 그룹 안 `button[aria-label="옵션 더보기"]` 직접 클릭 / PowerShell BOM jsonl → utf-8-sig.
 - 측정: x1 3건 연속 제출 26~36초 완료, x2 26초, 참조 수정 32초, 1K 다운로드 1024² JPEG.
 - 해상도: 1K 1:1 1024², 16:9 1376×768 / 2K 1:1 2048², 16:9 2752×1536(약 16초) → 1080은 2K 받아 축소.
 - 조사 산출물: `artifacts/runs/20261112-flow-ui-probe/`(probe*.txt, 샘플 이미지).
-- 미해결: 한도·오류·캡차 문구, 무료 한도 공식 수치.
-- 다음 행동: (1) 30개 이상 실전 배치로 속도·실패율 측정, 한도·오류 문구 수집해 `problemLines` 정규식 보강 (2) 9:16·2K 다운로드 실측과 `fit` 확인 (3) 캐릭터 일관성 배치(같은 ref_title 반복) 합격률 측정 (4) review.py 기준값(blank 8.0, dup 5)을 실제 이미지로 조정 (5) review.py 독립 리뷰 미실시.
+- 2026-11-13 WSL 이전·보완: Pillow는 `.venv`(pillow==12.0.0), review는 `.venv/bin/python`. 화면 비점유 실측(비활성 탭+DevTools 조작, 전면 창·커서 불변). `aside repl` 호출이 120초에 강제 종료 → 프롬프트 1개 = 호출 1회(`--chunk 1`, 호출 예산 105초, 간격은 Python에서). REPL은 매번 새 세션이라 쿠키 배너가 생성 버튼을 덮음 → 보일 때만 "나중에" 클릭. "reCAPTCHA 로 보호됨"은 상시 문구라 오류 감지에서 제외. dHash 64→256비트, dup 기준 10(다른 장면 최소 21, 재인코딩·2K 최대 4).
+- 실전 시험(2026-11-13, `artifacts/runs/20261113-consistency10`): 기준 c01 생성 후 c02~c10을 `ref_title`로 참조, 10/10 done, 장당 25~43초, check PASS, 몽타주상 캐릭터·그림체·마을 일관. `artifacts/runs/20261113-916-2k`: 9:16 2K 1536×2752 → fit 1080×1920 PASS.
+- 미해결: 한도·오류·캡차 실제 문구(아직 발생 안 함), 무료 한도 공식 수치.
+- 다음 행동: (1) 30개 이상 배치로 실패율 측정, 한도 문구가 나오면 `problemLines` 보강 (2) 같은 캐릭터 x2 이상 배치의 합격률 측정.
 
 ## 이력
+- 2026-11-13: WSL에서 재개. 120초 호출 제한·쿠키 배너·중복 판정 결함 수정, 일관성 10장 시험 성공.
 - 2026-11-12: 라핀 v1.2 분석(DOM 매크로: textbox insertText → 생성 버튼 클릭 → 이미지 감지 → 다운로드, 5~10초 무작위 대기, 애셋 검색으로 캐릭터 참조). 작업 순서 확정.

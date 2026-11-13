@@ -9,8 +9,8 @@
 먼저 읽을 것: record.md(현재 상태·다음 행동), docs/PRD.md(설계·실측값·차단 회피 규칙), docs/WORKFLOW.md(실행 절차).
 
 환경 준비:
-1. Python 3 + Pillow, Node, Aside CLI(aside)가 필요하다. `python tools/flow_run.py --self-test`와
-   `python tools/review.py --self-test`가 둘 다 PASS인지 확인한다.
+1. Python 3, Node, Aside CLI(aside)가 필요하고 Pillow는 `python3 -m venv .venv && .venv/bin/pip install pillow==12.0.0`로
+   설치한다. `python3 tools/flow_run.py --self-test`와 `.venv/bin/python tools/review.py --self-test`가 둘 다 PASS인지 확인한다.
 2. Aside 브라우저에서 flow.google.com에 로그인돼 있는지 확인한다(안 돼 있으면 사용자에게 로그인을 요청).
 3. 작업용 Flow 프로젝트 URL을 사용자에게 받거나 Flow에서 새 프로젝트를 만들어 FLOW_PROJECT_URL로 쓴다.
    (기존 컴퓨터의 시험 프로젝트 URL은 같은 계정이면 그대로 열린다:

@@ -29,13 +29,15 @@ def entries(run, ids=None):
     return out
 
 
-def dhash(img):
-    g = img.convert("L").resize((9, 8), Image.LANCZOS)
+def dhash(img, n=16):
+    # 256-bit: with 64 bits, distinct scenes sharing one reference image fell to distance 4,
+    # overlapping re-encoded copies (measured 2026-11-13; 256-bit: distinct >= 21, copies <= 4)
+    g = img.convert("L").resize((n + 1, n), Image.LANCZOS)
     px = g.tobytes()
     v = 0
-    for r in range(8):
-        for c in range(8):
-            v = (v << 1) | (px[r * 9 + c] > px[r * 9 + c + 1])
+    for r in range(n):
+        for c in range(n):
+            v = (v << 1) | (px[r * (n + 1) + c] > px[r * (n + 1) + c + 1])
     return v
 
 
@@ -59,7 +61,7 @@ def cmd_check(a):
                     w, h = im.size
                     sd = ImageStat.Stat(im.convert("L")).stddev[0]
                     hv = dhash(im)
-                r.update(width=w, height=h, stddev=round(sd, 2), dhash=f"{hv:016x}")
+                r.update(width=w, height=h, stddev=round(sd, 2), dhash=f"{hv:064x}")
                 hashes.append((rel, hv, r))
                 if min(w, h) < a.min_side:
                     r["flags"].append("too_small")
@@ -287,7 +289,7 @@ def main(argv=None):
     c.add_argument("run")
     c.add_argument("--min-side", type=int, default=700, help="minimum short side px (default 700)")
     c.add_argument("--blank-stddev", type=float, default=8.0, help="grayscale stddev below this = blank (default 8.0)")
-    c.add_argument("--dup-distance", type=int, default=5, help="dHash Hamming distance <= this = duplicate (default 5)")
+    c.add_argument("--dup-distance", type=int, default=10, help="256-bit dHash Hamming distance <= this = duplicate (default 10)")
     m = sub.add_parser("montage", help="numbered contact sheets")
     m.add_argument("run")
     m.add_argument("--ids", help="comma-separated item ids to include")
