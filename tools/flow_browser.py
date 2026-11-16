@@ -41,6 +41,9 @@ CHROME_ARGS = [
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
+    # no window at launch (Chrome ignores `start /min` and takes focus, measured 2026-11-16);
+    # the Flow tab is later opened in a new minimized, inactive window over CDP
+    "--no-startup-window",
 ]
 STAGING_ROOT_WIN = r"C:\Users\houno\AppData\Local\flow-automation\downloads"
 STAGING_ROOT_WSL = Path("/mnt/c/Users/houno/AppData/Local/flow-automation/downloads")
@@ -285,6 +288,7 @@ class FlowBrowser:
             self._pw.stop()
             self._pw = None
             raise TransportError("cdp connect failed: %s" % e)
+        self._minimize_windows()
         # per-run staging folder: concurrent runs never share download files
         run_tag = "run-%d-%d" % (os.getpid(), int(time.time()))
         self._staging_win = STAGING_ROOT_WIN + "\\" + run_tag
@@ -313,12 +317,40 @@ class FlowBrowser:
                 pass
         return False
 
+    def _minimize_windows(self):
+        """Keep the dedicated Chrome off the user's screen. Minimizing over CDP does not change
+        the foreground window (measured 2026-11-16), and rendering continues because of the
+        anti-throttling launch flags. Best effort: a failure here never blocks the run."""
+        try:
+            cdp = self._browser.new_browser_cdp_session()
+            done = set()
+            for t in cdp.send("Target.getTargets")["targetInfos"]:
+                if t.get("type") != "page":
+                    continue
+                try:
+                    w = cdp.send("Browser.getWindowForTarget", {"targetId": t["targetId"]})
+                except Exception:
+                    continue  # browser UI pages (e.g. sign-in dialogs) have no window
+                if w["windowId"] in done:
+                    continue
+                done.add(w["windowId"])
+                if w["bounds"].get("windowState") != "minimized":
+                    cdp.send("Browser.setWindowBounds", {"windowId": w["windowId"], "bounds": {"windowState": "minimized"}})
+        except Exception:
+            pass
+
     # ------------------------------------------------------------- probe (read-only)
     def probe(self, project_url):
         out = {"status": None, "error": None, "attached": None}
         try:
             page = self._ensure_page(project_url)
-            has_prompt = page.get_by_role("textbox", name=BOX_NAME).count() > 0
+            box = page.get_by_role("textbox", name=BOX_NAME)
+            if box.count() == 0 and "flow.google.com" in page.url:
+                try:  # a freshly opened tab is still loading the Flow app
+                    box.first.wait_for(state="attached", timeout=30000)
+                except Exception:
+                    pass
+            has_prompt = box.count() > 0
             has_session = self._has_google_session()
             status = classify_signin(page.url, has_prompt, has_session)
             out["attached"] = {"url": page.url, "has_prompt": has_prompt, "session": has_session,
@@ -360,7 +392,11 @@ class FlowBrowser:
                 return self._page
             before = {id(p) for p in ctx.pages}
             cdp = self._browser.new_browser_cdp_session()
-            cdp.send("Target.createTarget", {"url": project_url, "background": True})
+            target = {"url": project_url, "background": True}
+            if not pages:
+                # no window yet: open a minimized one so nothing appears or takes focus
+                target.update(newWindow=True, windowState="minimized")
+            cdp.send("Target.createTarget", target)
             deadline = time.time() + 15
             grace = 0
             while time.time() < deadline:
@@ -378,7 +414,12 @@ class FlowBrowser:
                 if created:
                     created[0].wait_for_timeout(500)
                 else:
-                    time.sleep(0.5)
+                    # the sync API only registers new pages while a Playwright call runs;
+                    # time.sleep here would never see the tab that was just created
+                    try:
+                        ctx.wait_for_event("page", timeout=500)
+                    except Exception:
+                        pass
             raise TransportError("project tab did not open: %s" % project_url)
         flows = [p for p in pages if "flow.google.com" in p.url]
         if flows:

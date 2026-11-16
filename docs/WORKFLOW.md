@@ -4,12 +4,13 @@
 
 ## 0. 준비 (세션당 1회)
 - 브라우저는 Aside가 아니라 **Flow 전용 Windows Chrome**(자동화 전용 프로필)이다. WSL의 Playwright가 DevTools 포트 `127.0.0.1:9222`로 붙는다(WSL `networkingMode=mirrored` 필요). 실행: `python3 tools/flow_browser.py start`(이미 실행 중이면 새로 띄우지 않음), 확인: `python3 tools/flow_browser.py check`. 직접 띄울 때는 `"/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222 '--user-data-dir=C:\Users\houno\AppData\Local\flow-automation\chrome-profile' --no-first-run --no-default-browser-check --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`.
-- 이 프로필은 사용자가 직접 Google에 로그인해 둔 것이다. 로그아웃·쿠키 삭제·프로필 삭제를 하지 않는다. 로그인 만료·캡차는 사용자에게 넘겨 전용 Chrome 창에서 직접 처리하게 한다. 창은 닫지 말고 최소화해 둔다.
+- 이 프로필은 사용자가 직접 Google에 로그인해 둔 것이다. 로그아웃·쿠키 삭제·프로필 삭제를 하지 않는다. 로그인 만료·캡차는 사용자에게 넘겨, 작업 표시줄에서 전용 Chrome 창을 열어 직접 처리하게 한다.
+- 화면에 띄우지 않는다: `--no-startup-window`로 창 없이 시작하고, Flow 탭은 CDP로 최소화된 비활성 새 창에 연다. 연결할 때마다 전용 Chrome 창을 최소화한다. 헤드리스 모드는 Flow의 reCAPTCHA·계정 제재 위험 때문에 쓰지 않는다(2026-11-16 실측: 생성 중 1초 간격 포커스 샘플 45회 중 전용 Chrome 0회, 최소화 상태로 생성·다운로드 정상).
 - 작업용 Flow 프로젝트 URL을 정해 `FLOW_PROJECT_URL` 환경변수나 `--project-url`로 넘긴다.
 - 연결 진단: `python3 tools/flow_run.py --doctor --project-url <URL>`. CDP 연결·Google 로그인·프로젝트 페이지 준비(프롬프트 입력창)를 확인하며, `READY`가 아니면(종료코드 1) 생성하지 않는다. 생성 명령에도 같은 자동 사전 검사가 적용된다.
 - Pillow·Playwright는 프로젝트 venv에 둔다: `python3 install.py`가 `pillow==12.0.0`·`playwright==1.65.2`를 설치한다(브라우저 내려받기 불필요). `review.py`는 `.venv/bin/python`으로 실행한다.
 - 셀프 테스트: `python3 tools/flow_run.py --self-test`, `.venv/bin/python tools/review.py --self-test`가 둘 다 `PASS`여야 한다.
-- 화면을 빼앗지 않는다: 전용 Chrome의 백그라운드 탭에 CDP로 클릭·입력하고 창을 앞으로 가져오지 않는다. 생성은 `nohup ... &`로 백그라운드에서 돌리고 로그 파일만 읽는다.
+- 마우스·키보드를 빼앗지 않는다: 전용 Chrome의 백그라운드 탭에 CDP로 클릭·입력하고 창을 앞으로 가져오지 않는다. 생성은 `nohup ... &`로 백그라운드에서 돌리고 로그 파일만 읽는다.
 - 배치 하나는 CDP 연결 하나로 처리한다(옛 `aside repl` 120초 제한 없음). 다운로드는 실행마다 Windows 임시 폴더(`C:\Users\houno\AppData\Local\flow-automation\downloads\run-…`)로 받아 `/mnt/c`로 읽는다. 2K 다운로드는 count 2 이하로 둔다.
 - 다운로드는 한 번에 하나만 진행한다. 프로젝트 화면에서 시작된 것으로 확인된 다운로드만 받고, 다운로드가 시작되지 않거나 끝나지 않거나 취소되면 배치를 멈춘다(`fatal: download_unresolved`). 그 항목은 Flow에서 결과를 확인한 뒤 `--force`로만 다시 만들고, 아직 제출하지 않은 항목은 그대로 이어서 실행한다. 다른 탭이나 사용자가 받은 파일은 가져가거나 지우지 않고, 남은 파일은 실행 끝에 `staging_leftovers`로 알려 준다.
 - 전용 Chrome에서 사람이 직접 다운로드하지 않는다. 같은 프로젝트 화면의 수동 다운로드가 자동 다운로드 순간과 겹치면 구분할 수 없어 그림이 뒤바뀔 수 있다(2026-11-16 사용자 결정으로 감수한 위험).

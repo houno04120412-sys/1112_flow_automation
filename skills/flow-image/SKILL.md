@@ -19,7 +19,7 @@ description: Google Flow(flow.google.com)의 무료 모델 Nano Banana 2.1로 �
 ## 준비 (세션당 1회)
 1. `~/.agents/bin/flow-run --self-test`, `~/.agents/bin/flow-review --self-test` 둘 다 `PASS`.
 2. 작업용 Flow 프로젝트 URL은 사용자가 지정한 프로젝트를 사용한다. 없으면 프로젝트를 확인하고 `export FLOW_PROJECT_URL=<URL>` 또는 `--project-url`로 전달한다. 다른 사람의 시험 프로젝트를 기본값으로 쓰지 않는다.
-3. 브라우저는 Aside가 아니라 Flow 전용 Windows Chrome(프로필 `C:\Users\houno\AppData\Local\flow-automation\chrome-profile`, CDP `127.0.0.1:9222`)이다. 꺼져 있으면 `~/.agents/bin/flow-browser start`. 이 프로필에서 로그아웃·쿠키 삭제·프로필 삭제 금지. `login_required`·`flow_not_ready`(로그인 만료 등)가 나면 사용자에게 전용 Chrome 창에서 직접 Google 로그인을 요청한다(handoff).
+3. 브라우저는 Aside가 아니라 Flow 전용 Windows Chrome(프로필 `C:\Users\houno\AppData\Local\flow-automation\chrome-profile`, CDP `127.0.0.1:9222`)이다. 꺼져 있으면 `~/.agents/bin/flow-browser start`. 이 프로필에서 로그아웃·쿠키 삭제·프로필 삭제 금지. `login_required`·`flow_not_ready`(로그인 만료 등)가 나면 사용자에게 작업 표시줄에서 최소화된 전용 Chrome 창을 열어 직접 Google 로그인하도록 요청한다(handoff). 전용 Chrome은 창 없이 시작하고 Flow 탭은 최소화된 창에 열리므로 화면에 뜨거나 포커스를 가져가지 않는다. 헤드리스 모드는 쓰지 않는다(reCAPTCHA·계정 제재 위험).
 4. `~/.agents/bin/flow-run --doctor --project-url <URL>`로 CDP 연결·Google 로그인·프로젝트 입력창을 확인한다. 생성 전에도 자동 검사하며, `READY`가 아니면(종료코드 1) 생성하지 않는다.
 
 ## 절차
@@ -36,7 +36,7 @@ description: Google Flow(flow.google.com)의 무료 모델 Nano Banana 2.1로 �
 6. **납품**: 1080 규격이 필요하면 생성 때 `--quality 2k`(count 2 이하)로 받고 `~/.agents/bin/flow-review fit <run> --size 1080x1920|1080x1080|1920x1080`. 1K 원본은 1080보다 작아 `fit`이 거부한다(정상). 15절 폴더 구조 프로젝트면 합격본을 `export/<MMDD>/`에 `_1` 버전 이름으로 복사한다.
 
 ## 동작 사실 (2026-11-16 CDP 실측)
-- 화면 비점유: 전용 Chrome 백그라운드 탭 + DevTools 프로토콜 조작, 창을 앞으로 가져오지 않는다.
+- 화면 비점유: 전용 Chrome은 최소화 상태에서 백그라운드 탭 + DevTools 프로토콜로 조작하고, 창을 앞으로 가져오지 않는다(생성 중 포커스 샘플 45회 중 전용 Chrome 0회).
 - 장당 21~41초(1K x1·참조 생성·2K 포함), 2K 9:16은 1536×2752. 배치 하나 = CDP 연결 하나.
 - 해상도: 1K 1:1 1024², 16:9 1376×768 / 2K 1:1 2048², 16:9 2752×1536.
 

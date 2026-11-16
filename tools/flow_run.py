@@ -161,7 +161,7 @@ def doctor_hints(d):
     if s == "connect_failed":
         return [start, "CDP 응답이 있는데 붙지 못하면 전용 Chrome을 재시작한다(프로필·로그인은 그대로 둔다)."] + common
     if s == "login_required":
-        return ["전용 Chrome 프로필에서 사용자가 직접 Google 로그인을 진행한다(로그아웃·쿠키 삭제·프로필 삭제 금지).",
+        return ["작업 표시줄에서 최소화된 전용 Chrome 창을 열고, 사용자가 직접 Google 로그인을 진행한다(로그아웃·쿠키 삭제·프로필 삭제 금지). 끝나면 창은 다시 최소화한다.",
                 "로그인 후 --doctor를 다시 실행한다."] + common
     if s == "flow_not_ready":
         return ["프로젝트 페이지가 준비되지 않았다(프롬프트 입력창 없음). 프로젝트 URL이 맞는지 확인하고 전용 Chrome에서 "
