@@ -16,7 +16,7 @@ from pathlib import Path
 SKILL = "flow-image"
 REPO = Path(__file__).resolve().parent
 SRC = REPO / "skills" / SKILL
-PILLOW = "pillow==12.0.0"
+VENV_PACKAGES = ["pillow==12.0.0", "playwright==1.65.2"]
 
 
 def targets():
@@ -33,8 +33,9 @@ def targets():
 def launchers():
     venv_py = REPO / ".venv" / "bin" / "python"
     return {
-        "flow-run": f'#!/usr/bin/env sh\nexec python3 "{REPO}/tools/flow_run.py" "$@"\n',
+        "flow-run": f'#!/usr/bin/env sh\nexec "{venv_py}" "{REPO}/tools/flow_run.py" "$@"\n',
         "flow-review": f'#!/usr/bin/env sh\nexec "{venv_py}" "{REPO}/tools/review.py" "$@"\n',
+        "flow-browser": f'#!/usr/bin/env sh\nexec "{venv_py}" "{REPO}/tools/flow_browser.py" "$@"\n',
     }
 
 
@@ -61,7 +62,7 @@ def main():
         venv = REPO / ".venv"
         if not (venv / "bin" / "python").exists():
             subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True)
-        subprocess.run([str(venv / "bin" / "pip"), "install", "-q", PILLOW], check=True)
+        subprocess.run([str(venv / "bin" / "pip"), "install", "-q", *VENV_PACKAGES], check=True)
     return 0
 
 

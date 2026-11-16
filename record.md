@@ -24,6 +24,10 @@
 7. 실전 검증: 30장 이상 배치로 속도·실패율·일관성 측정, 기본값 조정
 
 ## 현재 상태
+- 2026-11-16 Aside 제거·CDP 전환: Aside REPL은 탭 목록만 되고 부착·열기가 `TypeError: fetch failed`(이전 CLI·`aside exec`도 동일)라 버렸다. 대신 Flow 전용 Windows Chrome(프로필 `C:\Users\houno\AppData\Local\flow-automation\chrome-profile`, 사용자가 직접 Google 로그인, CDP `127.0.0.1:9222`)을 WSL의 `playwright==1.65.2`가 `connect_over_cdp`로 조작한다(WSL mirrored 네트워크). 새 `tools/flow_browser.py`(전송 계층·`start|check`), `flow_run.py`는 Aside 분기 제거. 다운로드는 Playwright Download API가 CDP에서 `canceled`라 `Browser.setDownloadBehavior`로 Windows 임시 폴더에 받아 `/mnt/c`로 읽는다.
+- 중단 안전성: 제출 가능성이 있는 항목은 `submission_unresolved`로 기록돼 done 전까지 유지되고, 자동 재제출하지 않고 종료코드 3으로 차단한다. `--force`만 재생성하며 기존 이미지는 `a_1.v2.jpg`처럼 새 이름으로 보존한다.
+- 검증: 회귀 테스트 21개·self-test PASS. 실전 `artifacts/runs/20261116-cdp-e2e1` 3/3 done(1K 1024², 참조 생성, 2K 2048²), review check PASS, 재개 skip·doctor READY 확인. 독립 검토 최종 PASS(회귀 34개, self-test PASS, 실전 `artifacts/runs/20261116-cdp-e2e2`). 다운로드는 사용자 결정에 따라 한 번에 하나만: 프레임·호스트로 확인된 다운로드만 받고, 시작·완료가 늦거나 취소되면 배치를 멈춘다(`download_unresolved`). 감수한 위험: 같은 프로젝트 화면에서 사람이 직접 받는 다운로드가 겹치면 구분 불가. `python3 install.py`로 전역 반영, 커밋은 미요청.
+- 연결 끊김 대응 원칙: 연결 실패 시 다른 이미지 모델로 자동 전환하지 않는다(0929_medical.ai.book에서 Flow 실패 후 gpt-image-2로 임의 대체된 사례).
 - 1~4단계 완료. 6단계(본 제작) 1차 완료: 스크립트 2개 + 절차 문서. 인계는 `HANDOFF.md`.
 - 결정: GUI 앱 없이 절차 문서 + 보조 스크립트 2개로 축소(compose는 Claude가 jsonl 직접 작성, check·montage·fit은 review.py 하나). 브라우저 실행기는 `aside repl` 1차, Playwright CDP 대체안.
 - 도구:
