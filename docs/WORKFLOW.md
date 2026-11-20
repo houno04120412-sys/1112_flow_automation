@@ -6,8 +6,9 @@
 - 브라우저는 Aside가 아니라 **Flow 전용 Windows Chrome**(자동화 전용 프로필)이다. WSL의 Playwright가 DevTools 포트 `127.0.0.1:9222`로 붙는다(WSL `networkingMode=mirrored` 필요). 실행: `python3 tools/flow_browser.py start`(이미 실행 중이면 새로 띄우지 않음), 확인: `python3 tools/flow_browser.py check`. 직접 띄울 때는 `"/mnt/c/Program Files/Google/Chrome/Application/chrome.exe" --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222 '--user-data-dir=C:\Users\houno\AppData\Local\flow-automation\chrome-profile' --no-first-run --no-default-browser-check --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding`.
 - 이 프로필은 사용자가 직접 Google에 로그인해 둔 것이다. 로그아웃·쿠키 삭제·프로필 삭제를 하지 않는다. 로그인 만료·캡차는 사용자에게 넘겨, 작업 표시줄에서 전용 Chrome 창을 열어 직접 처리하게 한다.
 - 화면에 띄우지 않는다: `--no-startup-window`로 창 없이 시작하고, Flow 탭은 CDP로 최소화된 비활성 새 창에 연다. 연결할 때마다 전용 Chrome 창을 최소화한다. 헤드리스 모드는 Flow의 reCAPTCHA·계정 제재 위험 때문에 쓰지 않는다(2026-11-16 실측: 생성 중 1초 간격 포커스 샘플 45회 중 전용 Chrome 0회, 최소화 상태로 생성·다운로드 정상).
-- 작업용 Flow 프로젝트 URL을 정해 `FLOW_PROJECT_URL` 환경변수나 `--project-url`로 넘긴다.
-- 연결 진단: `python3 tools/flow_run.py --doctor --project-url <URL>`. CDP 연결·Google 로그인·프로젝트 페이지 준비(프롬프트 입력창)를 확인하며, `READY`가 아니면(종료코드 1) 생성하지 않는다. 생성 명령에도 같은 자동 사전 검사가 적용된다.
+- Flow 프로젝트는 작업 폴더(현재 위치를 담은 `~/project_wsl/<이름>`, 그 밖이면 현재 폴더)마다 하나를 자동으로 쓴다. 첫 생성 때 폴더 이름을 제목으로 새 프로젝트를 만들어 `<작업 폴더>/.flow_project.json`에 저장하고 이후 재사용한다. 우선순위: `--project-url`(그 폴더에 기억) > `FLOW_PROJECT_URL` > 이어서 실행하는 `--run`의 `manifest.json` `project_url` > 저장된 폴더 프로젝트 > 새로 생성. `--new-project`는 새로 만들어 폴더 프로젝트를 바꾸고 이전 것은 `previous`에 남긴다. `--project-dir`·`--project-title`로 폴더·제목을 바꿀 수 있다.
+- 전용 Chrome이 꺼져 있으면 생성 명령이 창 없이 자동으로 띄운다.
+- 연결 진단: `python3 tools/flow_run.py --doctor`. CDP 연결·Google 로그인·프로젝트 페이지 준비(프롬프트 입력창, 프로젝트가 아직 없으면 Flow 홈의 `새 프로젝트` 버튼)를 확인하며, `READY`가 아니면(종료코드 1) 생성하지 않는다. 생성 명령에도 같은 자동 사전 검사가 적용된다.
 - Pillow·Playwright는 프로젝트 venv에 둔다: `python3 install.py`가 `pillow==12.0.0`·`playwright==1.65.2`를 설치한다(브라우저 내려받기 불필요). `review.py`는 `.venv/bin/python`으로 실행한다.
 - 셀프 테스트: `python3 tools/flow_run.py --self-test`, `.venv/bin/python tools/review.py --self-test`가 둘 다 `PASS`여야 한다.
 - 마우스·키보드를 빼앗지 않는다: 전용 Chrome의 백그라운드 탭에 CDP로 클릭·입력하고 창을 앞으로 가져오지 않는다. 생성은 `nohup ... &`로 백그라운드에서 돌리고 로그 파일만 읽는다.
@@ -22,12 +23,12 @@
 
 ## 2. 생성
 ```
-python3 tools/flow_run.py prompts.jsonl --project-url <URL> --ratio 1:1 --count 2 --quality 1k
+python3 tools/flow_run.py prompts.jsonl --ratio 1:1 --count 2 --quality 1k
 ```
 - 같은 `--run <dir>`로 다시 실행하면 `done` 항목은 건너뛰고 나머지만 이어서 한다. 강제로 다시 만들 때는 `--force`.
 - 제출 여부가 불명확한 항목은 자동 재제출하지 않고 종료코드 3으로 알린다. 먼저 Flow에서 결과를 확인한다. `--force`는 완료된 항목도 다시 만들므로, 필요한 항목만 담은 입력 파일로 범위를 제한한 뒤 사용한다. 다시 받은 이미지는 기존 파일을 덮지 않고 `a_1.v2.jpg`처럼 새 이름으로 저장된다.
 - 1080 결과물이 필요하면 `--quality 2k`로 받는다(1K는 1080보다 작다).
-- 종료코드 2는 치명 정지다(`fatal` 이름: `transport_unavailable`·`login_required`·`flow_not_ready`·`settings_mismatch`·`transport_error`·`problem_text`·`incomplete_item`·`download_unresolved`). `manifest.json`의 `fatal`과 `logs/`를 확인하고, 원인이 풀리기 전에는 다시 실행하지 않는다.
+- 종료코드 2는 치명 정지다(`fatal` 이름: `transport_unavailable`·`login_required`·`project_create_failed`·`flow_not_ready`·`settings_mismatch`·`transport_error`·`problem_text`·`incomplete_item`·`download_unresolved`). `manifest.json`의 `fatal`과 `logs/`를 확인하고, 원인이 풀리기 전에는 다시 실행하지 않는다.
 - 연결 실패 시 다른 이미지 모델이나 유료 API로 자동 전환하지 않는다. 실패 원인을 보고하고 대체 모델 사용은 사용자 승인 뒤에만 한다.
 - 운영 한도: 한 번 실행에 최대 280개 프롬프트(`--max-items`), 프롬프트 사이 5~12초, 30개마다 1~3분 휴식(기본값). 기본값을 낮추지 않는다.
 

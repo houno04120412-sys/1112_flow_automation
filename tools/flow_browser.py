@@ -50,6 +50,11 @@ STAGING_ROOT_WSL = Path("/mnt/c/Users/houno/AppData/Local/flow-automation/downlo
 # Google session cookie names, checked by NAME only; values are never read into output or logs
 GOOGLE_SESSION_COOKIES = ("SID", "HSID", "SSID", "APISID", "SAPISID", "__Secure-1PSID", "__Secure-3PSID")
 
+HOME_URL = "https://flow.google.com/"
+PROJECT_URL_RE = re.compile(r"^https://flow\.google\.com/project/[0-9a-f-]{36}")
+NEW_PROJECT_NAME = "새 프로젝트"
+TITLE_INPUT_NAME = "수정 가능한 텍스트"
+
 TILE = 'img[alt="사용자 이미지를 표시하는 타일"]'
 BOX_NAME = "무엇을 만들고 싶으신가요?"
 SUBMIT_NAME = "생성 시작"
@@ -88,6 +93,26 @@ RADIO_CLICK_JS = """([ratio, count]) => {
 CHECKED_JS = ("() => [...document.querySelectorAll('[role=radio]')]"
               ".filter((r) => r.getAttribute('aria-checked') === 'true').map((r) => r.textContent.trim())")
 BODY_JS = "() => document.body.innerText"
+# Flow promo/notice dialogs (e.g. "20 Flow 크레딧 받기", seen 2026-11-20) set aria-hidden on the
+# whole app, so the prompt box and tile menus vanish from role queries. Only the dialog's own
+# close (X) button is clicked: no offer is accepted or declined.
+CLOSE_BACKDROPS_JS = """() => {
+  const b = [...document.querySelectorAll('.cdk-overlay-backdrop-showing')];
+  b.forEach((x) => x.click());
+  return b.length;
+}"""
+CLOSE_DIALOGS_JS = """() => {
+  const out = [];
+  for (const d of document.querySelectorAll('mat-dialog-container,[role=dialog],[aria-modal=true]')) {
+    if (!d.offsetParent && getComputedStyle(d).position !== 'fixed') continue;
+    const b = [...d.querySelectorAll('button')].find((x) => x.innerText.trim() === 'close'
+      || ['닫기', 'close', 'Close'].includes(x.getAttribute('aria-label') || ''));
+    if (!b) continue;
+    out.push(d.innerText.trim().split('\\n').filter(Boolean).slice(0, 3).join(' / ').slice(0, 120));
+    b.click();
+  }
+  return out;
+}"""
 
 
 class TransportError(RuntimeError):
@@ -275,6 +300,7 @@ class FlowBrowser:
         self._frame_cdp = None
         self.staging_leftovers = []
         self.staging_dir = ""
+        self.closed_dialogs = []
 
     def __enter__(self):
         try:
@@ -341,10 +367,22 @@ class FlowBrowser:
 
     # ------------------------------------------------------------- probe (read-only)
     def probe(self, project_url):
+        """Readiness of the project page (prompt box), or of the home page (new-project button)
+        when project_url is HOME_URL, i.e. no project has been created yet."""
         out = {"status": None, "error": None, "attached": None}
         try:
             page = self._ensure_page(project_url)
-            box = page.get_by_role("textbox", name=BOX_NAME)
+            if "flow.google.com" in page.url:
+                try:  # let the app render so a promo dialog is in place before it is closed
+                    page.wait_for_load_state("load", timeout=15000)
+                    page.wait_for_timeout(2000)
+                except Exception:
+                    pass
+                self._close_dialogs(page)
+            if project_url == HOME_URL:
+                box = page.get_by_role("button", name=NEW_PROJECT_NAME)
+            else:
+                box = page.get_by_role("textbox", name=BOX_NAME)
             if box.count() == 0 and "flow.google.com" in page.url:
                 try:  # a freshly opened tab is still loading the Flow app
                     box.first.wait_for(state="attached", timeout=30000)
@@ -385,8 +423,13 @@ class FlowBrowser:
         if ctx is None:
             raise TransportError("no browser context")
         pages = [p for p in ctx.pages if not p.url.startswith("chrome://")]
+        if project_url == HOME_URL:
+            # every Flow URL starts with the home URL: only the home page itself counts
+            matches = lambda u: u.rstrip("/") == HOME_URL.rstrip("/")
+        else:
+            matches = lambda u: u.startswith(project_url)
         if project_url:
-            exact = [p for p in pages if p.url.startswith(project_url)]
+            exact = [p for p in pages if matches(p.url)]
             if exact:
                 self._page = exact[0]
                 return self._page
@@ -401,7 +444,7 @@ class FlowBrowser:
             grace = 0
             while time.time() < deadline:
                 created = [p for p in ctx.pages if id(p) not in before]
-                exact = [p for p in created if p.url.startswith(project_url)]
+                exact = [p for p in created if matches(p.url)]
                 if exact:
                     self._page = exact[0]
                     return self._page
@@ -427,6 +470,54 @@ class FlowBrowser:
             return self._page
         raise TransportError("no flow.google.com tab open")
 
+    # ------------------------------------------------------------- project creation
+    def create_project(self, title=None):
+        """Create an empty Flow project from the home page in the background tab.
+
+        Returns {"url", "title", "title_set"}. The title (the work folder name) is best effort:
+        an unrenamed project still works, only its Flow list label stays the default date.
+        Raises TransportError when the home page is not usable (signed out, UI changed).
+        """
+        page = self._ensure_page(HOME_URL)
+        if "accounts.google.com" in page.url or not self._has_google_session():
+            raise TransportError("login_required: Flow home is not signed in")
+        self._dismiss_cookie(page)
+        btn = page.get_by_role("button", name=NEW_PROJECT_NAME)
+        try:
+            btn.first.wait_for(state="visible", timeout=30000)
+        except Exception:
+            raise TransportError("new project button not found on %s" % page.url)
+        btn.first.click(timeout=10000)
+        deadline = time.time() + 30
+        while not PROJECT_URL_RE.match(page.url) and time.time() < deadline:
+            page.wait_for_timeout(500)
+        m = PROJECT_URL_RE.match(page.url)
+        if not m:
+            raise TransportError("new project did not open (url %s)" % page.url)
+        url = m.group(0)
+        # a fresh load renders the prompt box the same way a reopened project does
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        self._page = page
+        self._settings = None
+        out = {"url": url, "title": title, "title_set": False}
+        if title:
+            out["title_set"] = self._rename_project(page, title)
+        return out
+
+    def _rename_project(self, page, title):
+        try:
+            self._dismiss_cookie(page)
+            inp = page.get_by_role("textbox", name=TITLE_INPUT_NAME)
+            if not inp.count():
+                inp = page.locator('input[aria-label="%s"]' % TITLE_INPUT_NAME)
+            inp.first.wait_for(state="visible", timeout=20000)
+            inp.first.fill(title, timeout=10000)
+            inp.first.press("Enter", timeout=5000)
+            page.wait_for_timeout(1500)
+            return inp.first.input_value(timeout=5000) == title
+        except Exception:
+            return False
+
     # ------------------------------------------------------------- generation
     def generate(self, project_url, item, quality_label, on_submit, gen_timeout_s, dl_timeout_s):
         """Run one prompt item end to end; returns (result, images, fatal).
@@ -446,6 +537,7 @@ class FlowBrowser:
     def _generate(self, project_url, item, quality_label, on_submit, gen_timeout_s, dl_timeout_s):
         page = self._ensure_page(project_url)
         self._dismiss_cookie(page)
+        self._close_menus(page)
         fatal = self._ensure_settings(page, item)
         if fatal:
             return None, [], fatal
@@ -534,6 +626,18 @@ class FlowBrowser:
                 page.wait_for_timeout(800)
         except Exception:
             pass
+        self._close_dialogs(page)
+
+    def _close_dialogs(self, page):
+        """Close blocking Flow promo/notice dialogs by their X button; returns what was closed."""
+        try:
+            closed = page.evaluate(CLOSE_DIALOGS_JS)
+            if closed:
+                self.closed_dialogs.extend(closed)
+                page.wait_for_timeout(800)
+            return closed
+        except Exception:
+            return []
 
     def _clear_prompt(self, page):
         try:
@@ -590,6 +694,9 @@ class FlowBrowser:
             page.wait_for_timeout(300)
             page.keyboard.press("Escape")
             page.wait_for_timeout(400)
+            # a menu that ignored Escape leaves a transparent backdrop over every button
+            if page.evaluate(CLOSE_BACKDROPS_JS):
+                page.wait_for_timeout(600)
         except Exception:
             pass
 

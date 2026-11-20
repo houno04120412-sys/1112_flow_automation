@@ -36,6 +36,7 @@ class FakeBrowser:
         self.probe_result = READY_PROBE if probe is None else probe
         self.script = list(script)
         self.generated = []
+        self.created = []
         self.probe_calls = 0
         self.staging_leftovers = list(leftovers)
         self.staging_dir = "C:\\fake\\staging"
@@ -50,7 +51,13 @@ class FakeBrowser:
         self.probe_calls += 1
         return self.probe_result.pop(0) if isinstance(self.probe_result, list) else self.probe_result
 
+    def create_project(self, title=None):
+        url = "https://flow.google.com/project/new-%d" % (len(self.created) + 1)
+        self.created.append(title)
+        return {"url": url, "title": title, "title_set": True}
+
     def generate(self, project_url, item, quality_label, on_submit, gen_timeout_s, dl_timeout_s):
+        self.project_url = project_url
         self.generated.append((dict(item), quality_label))
         step = self.script.pop(0)
         if step.get("clicked", True):
@@ -80,8 +87,8 @@ class FlowRunSafety(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def invoke(self, fake, *extra):
-        argv = ["flow_run.py", str(self.prompts), "--project-url", "https://flow.google.com/project/x",
+    def invoke(self, fake, *extra, project=("--project-url", "https://flow.google.com/project/x")):
+        argv = ["flow_run.py", str(self.prompts), *project, "--project-dir", str(self.root),
                 "--run", str(self.run_dir), "--gap", "0", "0", *extra]
         out = io.StringIO()
 
@@ -89,11 +96,75 @@ class FlowRunSafety(unittest.TestCase):
             raise AssertionError("browser must not be created")
 
         with mock.patch.object(sys, "argv", argv), \
+             mock.patch.dict(flow_run.os.environ, {"FLOW_PROJECT_URL": ""}), \
              mock.patch.object(flow_run, "FlowBrowser", (lambda: fake) if fake is not None else no_browser), \
+             mock.patch.object(flow_run, "cdp_version", lambda timeout=3: {"Browser": "Chrome/fake"}), \
              mock.patch.object(flow_run.time, "sleep", lambda s: None), \
              contextlib.redirect_stdout(out):
             code = flow_run.main()
         return code, out.getvalue()
+
+    def state(self):
+        return json.loads((self.root / flow_run.STATE_NAME).read_text(encoding="utf-8"))
+
+    # ---------------------------------------------------------------- per-folder project
+    def test_first_run_creates_project_and_remembers_it(self):
+        fake = FakeBrowser(script=[{"result": done_result(), "images": [(1, JPEG)]}])
+        code, _ = self.invoke(fake, project=())
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.created, [self.root.name], "new project is titled after the work folder")
+        url = "https://flow.google.com/project/new-1"
+        self.assertEqual(fake.project_url, url)
+        self.assertEqual(self.state()["url"], url)
+        self.assertEqual(self.manifest()["project_url"], url)
+
+    def test_saved_project_is_reused_without_creating(self):
+        flow_run.save_state(self.root, "https://flow.google.com/project/saved", "t", "created")
+        fake = FakeBrowser(script=[{"result": done_result(), "images": [(1, JPEG)]}])
+        code, _ = self.invoke(fake, project=())
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.created, [])
+        self.assertEqual(fake.project_url, "https://flow.google.com/project/saved")
+
+    def test_resumed_run_keeps_its_own_project(self):
+        flow_run.save_state(self.root, "https://flow.google.com/project/saved", "t", "created")
+        self.run_dir.mkdir()
+        flow_run.write_json(self.run_dir / "manifest.json",
+                            {"items": [], "project_url": "https://flow.google.com/project/old-run"})
+        fake = FakeBrowser(script=[{"result": done_result(), "images": [(1, JPEG)]}])
+        self.invoke(fake, project=())
+        self.assertEqual(fake.project_url, "https://flow.google.com/project/old-run",
+                         "ref_title targets live in the run's project")
+
+    def test_new_project_replaces_saved_and_keeps_history(self):
+        flow_run.save_state(self.root, "https://flow.google.com/project/saved", "t", "created")
+        fake = FakeBrowser(script=[{"result": done_result(), "images": [(1, JPEG)]}])
+        code, _ = self.invoke(fake, "--new-project", project=())
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.created), 1)
+        st = self.state()
+        self.assertEqual(st["url"], "https://flow.google.com/project/new-1")
+        self.assertEqual([p["url"] for p in st["previous"]], ["https://flow.google.com/project/saved"])
+
+    def test_explicit_url_is_remembered_for_the_folder(self):
+        fake = FakeBrowser(script=[{"result": done_result(), "images": [(1, JPEG)]}])
+        self.invoke(fake)
+        self.assertEqual(self.state()["url"], "https://flow.google.com/project/x")
+
+    def test_project_creation_failure_is_fatal_before_any_submission(self):
+        fake = FakeBrowser()
+        fake.create_project = mock.Mock(side_effect=flow_browser.TransportError("login_required: x"))
+        code, _ = self.invoke(fake, project=())
+        self.assertEqual(code, 2)
+        self.assertEqual(fake.generated, [])
+        self.assertEqual(self.manifest()["fatal"]["fatal"], "login_required")
+        self.assertFalse((self.root / flow_run.STATE_NAME).exists())
+
+    def test_work_dir_is_the_project_folder_containing_cwd(self):
+        base = self.root / "pw"
+        (base / "1120_ASCII" / "work" / "1120").mkdir(parents=True)
+        self.assertEqual(flow_run.work_dir(base / "1120_ASCII" / "work" / "1120", base), (base / "1120_ASCII").resolve())
+        self.assertEqual(flow_run.work_dir(self.root, base), self.root.resolve())
 
     def manifest(self):
         return json.loads((self.run_dir / "manifest.json").read_text(encoding="utf-8"))

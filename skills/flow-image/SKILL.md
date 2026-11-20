@@ -18,9 +18,9 @@ description: Google Flow(flow.google.com)의 무료 모델 Nano Banana 2.1로 �
 
 ## 준비 (세션당 1회)
 1. `~/.agents/bin/flow-run --self-test`, `~/.agents/bin/flow-review --self-test` 둘 다 `PASS`.
-2. 작업용 Flow 프로젝트 URL은 사용자가 지정한 프로젝트를 사용한다. 없으면 프로젝트를 확인하고 `export FLOW_PROJECT_URL=<URL>` 또는 `--project-url`로 전달한다. 다른 사람의 시험 프로젝트를 기본값으로 쓰지 않는다.
-3. 브라우저는 Aside가 아니라 Flow 전용 Windows Chrome(프로필 `C:\Users\houno\AppData\Local\flow-automation\chrome-profile`, CDP `127.0.0.1:9222`)이다. 꺼져 있으면 `~/.agents/bin/flow-browser start`. 이 프로필에서 로그아웃·쿠키 삭제·프로필 삭제 금지. `login_required`·`flow_not_ready`(로그인 만료 등)가 나면 사용자에게 작업 표시줄에서 최소화된 전용 Chrome 창을 열어 직접 Google 로그인하도록 요청한다(handoff). 전용 Chrome은 창 없이 시작하고 Flow 탭은 최소화된 창에 열리므로 화면에 뜨거나 포커스를 가져가지 않는다. 헤드리스 모드는 쓰지 않는다(reCAPTCHA·계정 제재 위험).
-4. `~/.agents/bin/flow-run --doctor --project-url <URL>`로 CDP 연결·Google 로그인·프로젝트 입력창을 확인한다. 생성 전에도 자동 검사하며, `READY`가 아니면(종료코드 1) 생성하지 않는다.
+2. **Flow 프로젝트는 사용자에게 묻지 않는다.** `flow-run`은 작업 폴더(현재 위치를 담은 `~/project_wsl/<이름>`, 그 밖이면 현재 폴더)마다 Flow 프로젝트 하나를 쓴다. 첫 실행 때 폴더 이름을 제목으로 새 프로젝트를 자동 생성해 그 폴더의 `.flow_project.json`에 저장하고, 이후 실행은 그 프로젝트를 재사용한다. 같은 `--run`을 이어서 실행하면 그 실행의 프로젝트를 그대로 쓴다(`ref_title` 참조가 그 프로젝트 안에 있으므로). 그래서 반드시 작업 프로젝트 폴더에서 실행한다. 사용자가 URL을 직접 지정할 때만 `--project-url`(그 폴더에 기억됨)을 쓰고, 사용자가 원하거나 저장된 프로젝트가 Flow에서 삭제됐으면 `--new-project`로 새로 만든다. 다른 사람의 시험 프로젝트를 기본값으로 쓰지 않는다.
+3. 브라우저는 Aside가 아니라 Flow 전용 Windows Chrome(프로필 `C:\Users\houno\AppData\Local\flow-automation\chrome-profile`, CDP `127.0.0.1:9222`)이다. 꺼져 있으면 `flow-run`이 창 없이 자동으로 띄운다(수동: `~/.agents/bin/flow-browser start`). 이 프로필에서 로그아웃·쿠키 삭제·프로필 삭제 금지. `login_required`·`flow_not_ready`(로그인 만료 등)가 나면 사용자에게 작업 표시줄에서 최소화된 전용 Chrome 창을 열어 직접 Google 로그인하도록 요청한다(handoff). 전용 Chrome은 창 없이 시작하고 Flow 탭은 최소화된 창에 열리므로 화면에 뜨거나 포커스를 가져가지 않는다. 헤드리스 모드는 쓰지 않는다(reCAPTCHA·계정 제재 위험).
+4. `~/.agents/bin/flow-run --doctor`로 CDP 연결·Google 로그인·프로젝트 입력창(프로젝트가 아직 없으면 Flow 홈의 `새 프로젝트` 버튼)을 확인한다. 생성 전에도 자동 검사하며, `READY`가 아니면(종료코드 1) 생성하지 않는다.
 
 ## 절차
 1. **기획(모델 판단)**: 고정 블록(그림체·팔레트·캐릭터 외형·의상·공간)을 한 번 정해 모든 프롬프트에 그대로 넣고, 장면마다 행동·배경·구도만 바꾼다. 영어 프롬프트가 안정적이다.
@@ -42,7 +42,8 @@ description: Google Flow(flow.google.com)의 무료 모델 Nano Banana 2.1로 �
 
 ## 규칙
 - 계정 1개, 사용자가 직접 로그인한 전용 Chrome에서만. Flow 내부 API 직접 호출 금지. 기본 간격(5~12초)·휴식(30개마다 1~3분)·`--max-items 280`을 낮추지 않는다.
-- 종료코드 2(연결 불가·로그인 만료·설정 불일치·오류/한도 문구)면 멈추고 `manifest.json`의 `fatal`을 사용자에게 알린다. 원인이 풀리기 전 재실행 금지.
+- 사용자에게 묻는 것은 이미지 내용(무엇을·몇 장·비율·화풍)뿐이다. 프로젝트·브라우저·실행 폴더·품질 기본값은 이 문서대로 정하고 묻지 않는다. 사람이 해야 하는 일은 Google 로그인 만료·캡차뿐이다.
+- 종료코드 2(연결 불가·로그인 만료·프로젝트 생성 실패 `project_create_failed`·설정 불일치·오류/한도 문구)면 멈추고 `manifest.json`의 `fatal`을 사용자에게 알린다. 원인이 풀리기 전 재실행 금지.
 - 연결 실패를 이유로 `gpt-image` 등 다른 모델·유료 API로 임의 전환하지 않는다. Flow 작업의 실패 사실과 실제 생성에 사용한 도구를 구분해 보고하고, 대체 모델 사용은 사용자 승인 뒤에만 한다.
 - 종료코드 3은 제출 여부가 불명확한 항목을 차단했다는 뜻이다. Flow에서 결과를 확인한 뒤 필요한 항목만 새 입력 파일에 담아 `--force`로 명시적으로 재생성한다. `--force`는 입력에 포함된 완료 항목도 재생성하므로 전체 배치에 무심코 붙이지 않는다. 기존 이미지는 덮지 않고 새 파일은 `a_1.v2.jpg`처럼 저장된다.
 - `fatal: download_unresolved`면 다운로드가 늦거나 취소돼 배치가 멈춘 것이다. 그 항목만 Flow에서 결과를 확인하고, 나머지는 같은 `--run`으로 이어서 실행한다. 전용 Chrome에서 사람이 직접 다운로드하지 않는다(자동 다운로드와 겹치면 그림이 뒤바뀔 수 있음).

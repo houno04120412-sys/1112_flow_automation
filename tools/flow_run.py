@@ -24,8 +24,12 @@ Reliability contract:
 import argparse, datetime, json, os, random, re, sys, tempfile, time
 from pathlib import Path
 
-from flow_browser import CDP_URL, FlowBrowser, TransportError, chrome_cmdline, cdp_version
+from flow_browser import (CDP_URL, HOME_URL, FlowBrowser, TransportError, chrome_cmdline,
+                          cdp_version, start_chrome)
 
+# one Flow project per work folder, remembered here so the user never picks a project
+STATE_NAME = ".flow_project.json"
+PROJECTS_ROOT = Path.home() / "project_wsl"
 
 
 QUALITY = {"1k": "1K 원본 크기", "2k": "2K 업스케일링됨"}
@@ -78,6 +82,54 @@ def write_json(path, data):
 
 def now_iso():
     return datetime.datetime.now().isoformat(timespec="seconds")
+
+
+def work_dir(cwd=None, root=None):
+    """The work folder that owns the Flow project: ~/project_wsl/<name> when cwd is inside one
+    (subfolders such as work/1120 share the project), else cwd itself."""
+    cwd = Path(cwd or os.getcwd()).resolve()
+    root = Path(root or PROJECTS_ROOT).resolve()
+    try:
+        rel = cwd.relative_to(root)
+    except ValueError:
+        return cwd
+    return root / rel.parts[0] if rel.parts else cwd
+
+
+def load_state(wd):
+    p = Path(wd) / STATE_NAME
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def save_state(wd, url, title, source):
+    """Remember the folder's project; an earlier different project is kept in `previous`."""
+    old = load_state(wd) or {}
+    if old.get("url") == url:
+        return
+    previous = list(old.get("previous") or [])
+    if old.get("url"):
+        previous.append({k: old.get(k) for k in ("url", "title", "saved")})
+    write_json(Path(wd) / STATE_NAME, {"url": url, "title": title, "source": source,
+                                       "saved": now_iso(), "previous": previous})
+
+
+def resolve_project(flag_url, env_url, run_url, saved_url, new_project):
+    """(url, source). Order: --project-url > FLOW_PROJECT_URL > the run's own project (a resumed
+    run keeps its ref_title targets) > the folder's saved project > None (create a new one)."""
+    if flag_url:
+        return flag_url, "flag"
+    if env_url:
+        return env_url, "env"
+    if new_project:
+        return None, "new"
+    if run_url:
+        return run_url, "run"
+    if saved_url:
+        return saved_url, "saved"
+    return None, "new"
 
 
 def existing_files(run_dir, item_id):
@@ -155,7 +207,7 @@ def doctor_hints(d):
              "(또는 Windows 명령 프롬프트에서: " + chrome_cmdline() + ")")
     s = d.get("status")
     if s in READY_STATES:
-        return ["전송·프로젝트 페이지 준비 확인됨. 실행: python3 tools/flow_run.py prompts.jsonl --project-url <URL>"]
+        return ["전송·프로젝트 준비 확인됨. 실행: flow-run prompts.jsonl (프로젝트는 작업 폴더별로 자동 생성·재사용)"]
     if s == "cdp_unreachable":
         return [start, "시작 후 --doctor를 다시 실행한다."] + common
     if s == "connect_failed":
@@ -164,8 +216,8 @@ def doctor_hints(d):
         return ["작업 표시줄에서 최소화된 전용 Chrome 창을 열고, 사용자가 직접 Google 로그인을 진행한다(로그아웃·쿠키 삭제·프로필 삭제 금지). 끝나면 창은 다시 최소화한다.",
                 "로그인 후 --doctor를 다시 실행한다."] + common
     if s == "flow_not_ready":
-        return ["프로젝트 페이지가 준비되지 않았다(프롬프트 입력창 없음). 프로젝트 URL이 맞는지 확인하고 전용 Chrome에서 "
-                "해당 탭을 연뒤 --doctor를 다시 실행한다."] + common
+        return ["프로젝트 페이지가 준비되지 않았다(프롬프트 입력창 없음). 저장된 프로젝트가 Flow에서 삭제됐으면 "
+                "--new-project로 새 프로젝트를 만들고, 아니면 잠시 뒤 --doctor를 다시 실행한다."] + common
     return ["--doctor를 다시 실행해 상태를 확인한다."] + common
 
 
@@ -174,14 +226,22 @@ def doctor(args):
     hints = []
     ver = cdp_version()
     print(f"cdp      : {CDP_URL} {ver.get('Browser') if ver else 'NOT REACHABLE'}")
-    if not args.project_url:
-        print("project  : --project-url/FLOW_PROJECT_URL 없음")
-        hints.append("생성에 쓸 Flow 프로젝트 URL을 --project-url 또는 FLOW_PROJECT_URL로 넘긴다.")
+    wd = Path(args.project_dir).resolve() if args.project_dir else work_dir()
+    run_m = {}
+    if args.run and (Path(args.run) / "manifest.json").exists():
+        run_m = json.loads((Path(args.run) / "manifest.json").read_text(encoding="utf-8"))
+    url, src = resolve_project(args.project_url, os.environ.get("FLOW_PROJECT_URL"), run_m.get("project_url"),
+                               (load_state(wd) or {}).get("url"), args.new_project)
+    if url:
+        print(f"project  : {url} ({src})")
+    else:
+        print(f"project  : 없음 -> 생성 때 새 Flow 프로젝트 '{args.project_title or wd.name}' 자동 생성, "
+              f"{wd / STATE_NAME}에 저장")
     d = {"status": "cdp_unreachable", "error": "CDP endpoint not reachable"}
     if ver:
         try:
             with FlowBrowser() as br:
-                d = br.probe(args.project_url)
+                d = br.probe(url or HOME_URL)
         except TransportError as e:
             d = {"status": "connect_failed", "error": str(e)[:300]}
         a = d.get("attached")
@@ -270,6 +330,11 @@ def run(args):
     (run_dir / "logs").mkdir(exist_ok=True)
     mpath = run_dir / "manifest.json"
     manifest = json.loads(mpath.read_text(encoding="utf-8")) if mpath.exists() else {"items": []}
+    wd = Path(args.project_dir).resolve() if args.project_dir else work_dir()
+    title = args.project_title or wd.name
+    project_url, project_src = resolve_project(args.project_url, os.environ.get("FLOW_PROJECT_URL"),
+                                               manifest.get("project_url"), (load_state(wd) or {}).get("url"),
+                                               args.new_project)
     by_id = {m["id"]: m for m in manifest["items"]}
     todo, blocked = [], []
     for o in items:
@@ -289,13 +354,38 @@ def run(args):
     if args.dry_run:
         plan = [{"id": o["id"], "ratio": o["ratio"], "count": o["count"],
                  "quality": o.get("quality") or args.quality, "ref_title": o.get("ref_title") or ""} for o in todo]
-        print(json.dumps({"dry_run": True, "items": plan}, ensure_ascii=False, indent=1))
+        print(json.dumps({"dry_run": True, "project": project_url or "new: " + title,
+                          "project_source": project_src, "items": plan}, ensure_ascii=False, indent=1))
         return 0
     fatal, done_since_rest = None, 0
     if todo:
+        if not cdp_version():
+            # the dedicated Chrome starts windowless and only when not running: no user step needed
+            print(json.dumps({"chrome": start_chrome()}, ensure_ascii=False))
         try:
             with FlowBrowser() as br:
-                ok, pr = preflight(br, args.project_url)
+                if not project_url:
+                    try:
+                        info = br.create_project(title)
+                    except TransportError as e:
+                        login = str(e).startswith("login_required")
+                        fatal = {"fatal": "login_required" if login else "project_create_failed",
+                                 "stage": "create_project", "error": str(e)[:300], "at": now_iso(),
+                                 "hint": "flow-run --doctor 로 진단한다. 로그인 만료면 사용자가 전용 Chrome에서 직접 로그인한다"}
+                        manifest["fatal"] = fatal
+                        write_json(mpath, manifest)
+                        print(json.dumps({"fatal": fatal}, ensure_ascii=False))
+                        return 2
+                    project_url, project_src = info["url"], "created"
+                    save_state(wd, project_url, title if info["title_set"] else None, "created")
+                    print(json.dumps({"project_created": project_url, "title": title,
+                                      "title_set": info["title_set"], "state": str(wd / STATE_NAME)},
+                                     ensure_ascii=False))
+                elif project_src == "flag":
+                    save_state(wd, project_url, None, "flag")
+                manifest["project_url"] = project_url
+                write_json(mpath, manifest)
+                ok, pr = preflight(br, project_url)
                 print(json.dumps({"preflight": pr["status"], "attempts": pr.get("attempts"),
                                   "error": pr.get("error")}, ensure_ascii=False))
                 if not ok:
@@ -324,7 +414,7 @@ def run(args):
                     result, images, extra_fatal = None, [], None
                     try:
                         result, images, extra_fatal = br.generate(
-                            args.project_url, o, quality, on_submit, args.gen_timeout, 30)
+                            project_url, o, quality, on_submit, args.gen_timeout, 30)
                     except TransportError as e:
                         fatal = {"fatal": "transport_error", "reason": str(e)[:300], "ids": [o["id"]], "at": now_iso()}
                     new_files = []
@@ -370,6 +460,8 @@ def run(args):
             write_json(mpath, manifest)
             print(json.dumps({"fatal": fatal}, ensure_ascii=False))
             return 2
+        if getattr(br, "closed_dialogs", None):
+            print(json.dumps({"closed_dialogs": br.closed_dialogs}, ensure_ascii=False))
         left = getattr(br, "staging_leftovers", [])
         if left:
             # files the tool did not start (or could not attribute) stay in staging: reported, not lost
@@ -422,7 +514,11 @@ def main():
                                  epilog="exit: 0 ok, 2 fatal stop (see manifest.json fatal), "
                                         "3 ids left interrupted/submitted and not rerun (--force authorizes)")
     ap.add_argument("prompts", nargs="?", help="prompts.jsonl")
-    ap.add_argument("--project-url", default=os.environ.get("FLOW_PROJECT_URL"), help="Flow project URL (or env FLOW_PROJECT_URL)")
+    ap.add_argument("--project-url", help="Flow project URL (or env FLOW_PROJECT_URL); remembered for the work folder. "
+                                           "Omitted: the folder's saved project, else a new one is created")
+    ap.add_argument("--new-project", action="store_true", help="create a new Flow project and make it the folder's project")
+    ap.add_argument("--project-dir", help="work folder owning the project (default: ~/project_wsl/<name> containing cwd, else cwd)")
+    ap.add_argument("--project-title", help="title for a newly created project (default: work folder name)")
     ap.add_argument("--run", help="run dir; reuse an existing one to resume (done ids are skipped)")
     ap.add_argument("--ratio", default="1:1", choices=RATIOS)
     ap.add_argument("--count", type=int, default=1, choices=[1, 2, 3, 4], help="images per prompt (x1-x4)")
@@ -442,8 +538,10 @@ def main():
         return self_test()
     if a.doctor:
         return doctor(a)
-    if not a.prompts or not a.project_url:
-        ap.error("prompts and --project-url (or FLOW_PROJECT_URL) are required")
+    if not a.prompts:
+        ap.error("prompts is required")
+    if a.new_project and (a.project_url or os.environ.get("FLOW_PROJECT_URL")):
+        ap.error("--new-project cannot be combined with --project-url/FLOW_PROJECT_URL")
     return run(a)
 
 
